@@ -1,0 +1,16 @@
+workflows:
+  android-workflow:
+    name: Build Android APK
+    max_build_duration: 60
+    environment:
+      java: 17
+    scripts:
+      - name: Unzip and Build APK
+        script: |
+          unzip -o "*.zip"
+          PROJECT_DIR=$(dirname "$(find . -name "settings.gradle*" | head -n 1)")
+          cd "$PROJECT_DIR"
+          chmod +x gradlew || true
+          gradle assembleDebug
+    artifacts:
+      - "**/build/outputs/apk/debug/*.apk"
