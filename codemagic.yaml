@@ -5,11 +5,11 @@ workflows:
     environment:
       java: 17
     scripts:
-      - name: Unzip, Generate All Missing Files & Build APK
+      - name: Unzip, Generate Missing Entry Points & Build APK
         script: |
           unzip -o "*.zip"
           
-          # 1. إنشاء أيقونات التطبيق بصيغة XML و PNG لضمان توافق كل الإصدارات
+          # 1. إنشاء أيقونات التطبيق
           mkdir -p app/src/main/res/mipmap-anydpi-v26
           cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           <?xml version="1.0" encoding="utf-8"?>
@@ -20,7 +20,7 @@ workflows:
           EOF
           cp app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 
-          # 2. إنشاء مجلد values وتوليد ملفات الثيمات والألوان الاحتياطية
+          # 2. إنشاء ملفات الثيمات والألوان
           mkdir -p app/src/main/res/values
           cat << 'EOF' > app/src/main/res/values/themes.xml
           <?xml version="1.0" encoding="utf-8"?>
@@ -44,7 +44,7 @@ workflows:
           </resources>
           EOF
 
-          # 3. إنشاء ملفات XML الخاصة بقواعد الأندرويد الحديث (Backup & Data Extraction)
+          # 3. إنشاء ملفات XML الخاصة بقواعد الأندرويد
           mkdir -p app/src/main/res/xml
           cat << 'EOF' > app/src/main/res/xml/backup_rules.xml
           <?xml version="1.0" encoding="utf-8"?>
@@ -57,45 +57,142 @@ workflows:
           </data-extraction-rules>
           EOF
 
-          # 4. ضبط اسم الثيم في AndroidManifest.xml ليطابق الثيم الذي أنشأناه دون تعارض
           sed -i.bak 's/android:theme="@style\/[^"]*"/android:theme="@style\/Theme.GeminiArabicAssistant"/g' app/src/main/AndroidManifest.xml
 
-          # 5. إنشاء ملفات Gradle الأساسية للمشروع
-          cat << 'EOF' > gradle.properties
-          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-          android.useAndroidX=true
-          kotlin.code.style=official
-          android.nonTransitiveRClass=true
+          # 4. توليد ملف AssistantApplication.kt المفقود
+          mkdir -p app/src/main/java/com/gemini/arabicassistant
+          cat << 'EOF' > app/src/main/java/com/gemini/arabicassistant/AssistantApplication.kt
+          package com.gemini.arabicassistant
+
+          import android.app.Application
+
+          class AssistantApplication : Application()
           EOF
-          
-          cat << 'EOF' > settings.gradle.kts
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.name = "GeminiApp"
-          include(":app")
-          EOF
-          
-          cat << 'EOF' > build.gradle.kts
-          plugins {
-              id("com.android.application") version "8.7.2" apply false
-              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
-              id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
-          }
-          EOF
-          
-          # 6. تشغيل البناء النهائي
-          gradle assembleDebug
-    artifacts:
-      - "app/build/outputs/apk/debug/*.apk"
+
+          # 5. توليد ملف MainActivity.kt الكامل لربط جميع الشاشات والخدمات
+          cat << 'EOF' > app/src/main/java/com/gemini/arabicassistant/MainActivity.kt
+          package com.gemini.arabicassistant
+
+          import android.Manifest
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.speech.RecognizerIntent
+          import android.widget.Toast
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.rememberLauncherForActivityResult
+          import androidx.activity.compose.setContent
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.material3.MaterialTheme
+          import androidx.compose.material3.darkColorScheme
+          import androidx.compose.runtime.*
+          import com.gemini.arabicassistant.actions.DeviceActionExecutor
+          import com.gemini.arabicassistant.data.GeminiFlashRepository
+          import com.gemini.arabicassistant.data.SecurePrefsManager
+          import com.gemini.arabicassistant.service.FloatingBubbleService
+          import com.gemini.arabicassistant.ui.chat.MainChatScreen
+          import com.gemini.arabicassistant.ui.chat.UiChatMessage
+          import com.gemini.arabicassistant.ui.onboarding.ApiKeyScreen
+          import com.gemini.arabicassistant.ui.settings.InstalledAppItem
+          import com.gemini.arabicassistant.ui.settings.SettingsScreen
+          import kotlinx.coroutines.launch
+          import java.util.UUID
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  val prefs = SecurePrefsManager(applicationContext)
+                  val executor = DeviceActionExecutor(applicationContext, prefs)
+                  val repository = GeminiFlashRepository(prefs, executor)
+
+                  setContent {
+                      MaterialTheme(colorScheme = darkColorScheme()) {
+                          var hasApiKey by remember { mutableStateOf(prefs.hasValidApiKey()) }
+                          var showSettings by remember { mutableStateOf(false) }
+
+                          var assistantName by remember { mutableStateOf(prefs.getAssistantName()) }
+                          var wallpaperUri by remember { mutableStateOf(prefs.getWallpaperUri()) }
+                          var dimAlpha by remember { mutableFloatStateOf(prefs.getWallpaperDimming()) }
+                          var blacklisted by remember { mutableStateOf(prefs.getBlacklistedPackages()) }
+
+                          val messages = remember {
+                              mutableStateListOf(
+                                  UiChatMessage(
+                                      id = "welcome",
+                                      isUser = false,
+                                      text = "أهلاً بك! أنا $assistantName، كيف يمكنني مساعدتك اليوم؟"
+                                  )
+                              )
+                          }
+                          var isSending by remember { mutableStateOf(false) }
+                          val scope = rememberCoroutineScope()
+
+                          val permissionLauncher = rememberLauncherForActivityResult(
+                              ActivityResultContracts.RequestMultiplePermissions()
+                          ) { }
+
+                          LaunchedEffect(Unit) {
+                              val perms = mutableListOf(
+                                  Manifest.permission.RECORD_AUDIO,
+                                  Manifest.permission.READ_CONTACTS,
+                                  Manifest.permission.WRITE_CONTACTS
+                              )
+                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                  perms.add(Manifest.permission.POST_NOTIFICATIONS)
+                              }
+                              permissionLauncher.launch(perms.toTypedArray())
+                          }
+
+                          val sendAction: (String) -> Unit = { text ->
+                              messages.add(UiChatMessage(UUID.randomUUID().toString(), true, text))
+                              isSending = true
+                              scope.launch {
+                                  val result = repository.sendMessage(text)
+                                  messages.add(UiChatMessage(UUID.randomUUID().toString(), false, result.replyText))
+                                  isSending = false
+                              }
+                          }
+
+                          val voiceLauncher = rememberLauncherForActivityResult(
+                              ActivityResultContracts.StartActivityForResult()
+                          ) { res ->
+                              val spoken = res.data
+                                  ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                                  ?.firstOrNull()
+                              if (!spoken.isNullOrBlank()) {
+                                  sendAction(spoken)
+                              }
+                          }
+
+                          if (!hasApiKey) {
+                              ApiKeyScreen(
+                                  userName = prefs.getUserName(),
+                                  repository = repository,
+                                  onKeyValidated = { validKey ->
+                                      prefs.saveGeminiApiKey(validKey)
+                                      hasApiKey = true
+                                  }
+                              )
+                          } else if (showSettings) {
+                              val installedApps = remember {
+                                  val pm = packageManager
+                                  pm.getInstalledApplications(PackageManager.GET_META_DATA)
+                                      .filter { pm.getLaunchIntentForPackage(it.packageName) != null }
+                                      .map {
+                                          InstalledAppItem(
+                                              label = pm.getApplicationLabel(it).toString(),
+                                              packageName = it.packageName
+                                          )
+                                      }
+                                      .sortedBy { it.label }
+                              }
+
+                              SettingsScreen(
+                                  initialAssistantName = assistantName,
+                                  initialDimAlpha = dimAlpha,
+                                  installedApps = installedApps,
+                                  initialBlacklisted = blacklisted,
