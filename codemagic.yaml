@@ -5,16 +5,51 @@ workflows:
     environment:
       java: 17
     scripts:
-      - name: Unzip and Build APK
+      - name: Unzip, Generate Root Gradle Files & Build APK
         script: |
           unzip -o "*.zip"
-          ROOT_DIR=$(dirname "$(find . -maxdepth 3 -name "settings.gradle*" | head -n 1)")
-          cd "$ROOT_DIR"
-          if [ -f "./gradlew" ]; then
-            chmod +x gradlew
-            ./gradlew assembleDebug
-          else
-            gradle assembleDebug
-          fi
+          
+          # استخراج إصدارات الإضافات من داخل app/build.gradle.kts لضمان التوافق التام
+          AGP_VER=$(grep -oE 'com\.android\.application["'\''] version ["'\''][^"'\'']+' app/build.gradle.kts | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "8.2.2")
+          KOTLIN_VER=$(grep -oE 'org\.jetbrains\.kotlin\.android["'\''] version ["'\''][^"'\'']+' app/build.gradle.kts | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "1.9.22")
+          
+          # إنشاء ملف gradle.properties الضروري لمكتبات AndroidX و Kotlin
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          EOF
+          
+          # إنشاء ملف settings.gradle.kts لربط مجلد app
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "GeminiApp"
+          include(":app")
+          EOF
+          
+          # إنشاء ملف build.gradle.kts الرئيسي بالإصدارات المستخرجة
+          cat << EOF > build.gradle.kts
+          plugins {
+              id("com.android.application") version "$AGP_VER" apply false
+              id("org.jetbrains.kotlin.android") version "$KOTLIN_VER" apply false
+          }
+          EOF
+          
+          # تشغيل البناء باستخدام Gradle
+          gradle assembleDebug --stacktrace
     artifacts:
-      - "**/build/outputs/apk/debug/*.apk"
+      - "app/build/outputs/apk/debug/*.apk"
