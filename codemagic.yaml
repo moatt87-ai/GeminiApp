@@ -8,9 +8,13 @@ workflows:
       - name: Unzip and Build APK
         script: |
           unzip -o "*.zip"
-          PROJECT_DIR=$(dirname "$(find . -name "settings.gradle*" | head -n 1)")
-          cd "$PROJECT_DIR"
-          chmod +x gradlew || true
-          gradle assembleDebug
+          ROOT_DIR=$(dirname "$(find . -maxdepth 3 -name "settings.gradle*" | head -n 1)")
+          cd "$ROOT_DIR"
+          if [ -f "./gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug
+          else
+            gradle assembleDebug
+          fi
     artifacts:
       - "**/build/outputs/apk/debug/*.apk"
